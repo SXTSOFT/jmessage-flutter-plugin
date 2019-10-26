@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:platform/platform.dart';
 
+
+final String flutter_log = "| JMessage | Flutter | ";
+
 T getEnumFromString<T>(Iterable<T> values,String str) {
   return values.firstWhere((f) => f.toString().split('.').last == str
     , orElse: () => null);
@@ -32,6 +35,9 @@ class JMNotificationSettingsIOS {
     return <String, bool>{'sound': sound, 'alert': alert, 'badge': badge};
   }
 }
+
+/// 函数回调
+typedef JMCallback = void Function(dynamic a, dynamic b);
 
 /// 点击通知栏
 
@@ -70,6 +76,7 @@ class JMEventHandlers {
 }
 
 class JmessageFlutter {
+
 
   static final JmessageFlutter _instance = new JmessageFlutter.private(
             const MethodChannel('jmessage_flutter'),
@@ -181,7 +188,8 @@ class JmessageFlutter {
         case 'onLoginStateChanged':
           for (JMLoginStateChangedListener cb in _eventHanders.loginStateChanged) {
             String type = call.arguments.cast<dynamic, dynamic>()['type'];
-            cb(getEnumFromString(JMLoginStateChangedType.values, type));
+            JMLoginStateChangedType loginState = getEnumFromString(JMLoginStateChangedType.values, type);
+            cb(loginState);
           }
           break;
         case 'onSyncOfflineMessage':
@@ -222,7 +230,8 @@ class JmessageFlutter {
         case 'onReceiveTransCommand':
           for (JMReceiveTransCommandListener cb in _eventHanders.receiveTransCommand) {
             Map json = call.arguments.cast<dynamic, dynamic>();
-            cb(JMReceiveTransCommandEvent.fromJson(json));
+            JMReceiveTransCommandEvent ev = JMReceiveTransCommandEvent.fromJson(json);
+            cb(ev);
           }
           break;
         case 'onReceiveChatRoomMessage':
@@ -316,6 +325,10 @@ class JmessageFlutter {
       });
     }
 
+  /*
+  * 登录
+  * @return 用户信息，可能为 null
+  * */
   Future<JMUserInfo> login({
     @required String username,
     @required String password,
@@ -335,13 +348,10 @@ class JmessageFlutter {
     }else{
       return JMUserInfo.fromJson(userJson);
     }
-
-
   }
 
   Future<void> logout() async {
     await _channel.invokeMethod('logout');
-    return;
   }
 
 
@@ -460,7 +470,7 @@ class JmessageFlutter {
     Map<dynamic, dynamic> customObject,
     double latitude,
     double longitude,
-    num scale,
+    int scale,
     String address,
     Map<dynamic, dynamic> extras,
   }) async {
@@ -612,7 +622,7 @@ class JmessageFlutter {
     @required dynamic type, /// (JMSingle | JMGroup | JMChatRoom)
     @required double latitude,
     @required double longitude,
-    @required num scale,
+    @required int scale,
     String address,
     JMMessageSendOptions sendOption,
     Map<dynamic, dynamic> extras,
@@ -698,7 +708,17 @@ class JmessageFlutter {
 
     List resArr = await _channel.invokeMethod('getHistoryMessages', 
       param..removeWhere((key,value) => value == null));
-    var res = resArr.map((messageMap) => JMNormalMessage.generateMessageFromJson(messageMap)).toList();
+
+    List res = [];
+    for (Map messageMap in resArr) {
+      dynamic d = JMNormalMessage.generateMessageFromJson(messageMap);
+      if (d != null) {
+        res.add(d);
+      }else{
+        print("get history msg, get a message is null");
+      }
+    }
+    //var res = resArr.map((messageMap) => JMNormalMessage.generateMessageFromJson(messageMap)).toList();
     return res;
   }
 
@@ -1057,6 +1077,13 @@ class JmessageFlutter {
     };
   }
 
+  /*
+  * 下载缩略图
+  *
+  * @param target    聊天对象， JMSingle | JMGroup | JMChatRoom
+  * @param messageId 本地数据库中的消息 id
+  *
+  * */
   Future<Map> downloadThumbImage({
     @required dynamic target,
     @required String messageId,
@@ -1071,6 +1098,13 @@ class JmessageFlutter {
     };
   }
 
+  /*
+  * 下载原图
+  *
+  * @param target    聊天对象， JMSingle | JMGroup | JMChatRoom
+  * @param messageId 本地数据库中的消息 id
+  *
+  * */
   Future<Map> downloadOriginalImage({
     @required dynamic target,
     @required String messageId,
@@ -1085,6 +1119,13 @@ class JmessageFlutter {
     };
   }
 
+  /*
+  * 下载语音
+  *
+  * @param target    聊天对象， JMSingle | JMGroup | JMChatRoom
+  * @param messageId 本地数据库中的消息 id
+  *
+  * */
   Future<Map> downloadVoiceFile({
     @required dynamic target,
     @required String messageId,
@@ -1099,6 +1140,13 @@ class JmessageFlutter {
     };
   }
 
+  /*
+  * 下载
+  *
+  * @param target    聊天对象， JMSingle | JMGroup | JMChatRoom
+  * @param messageId 本地数据库中的消息 id
+  *
+  * */
   Future<Map> downloadFile({
     @required dynamic target,
     @required String messageId,
@@ -1392,8 +1440,153 @@ class JmessageFlutter {
     
     return;
   }
+
+  /// 会话间透传命令，只支持 single、group，不支持 chatRoom
+  Future<void> sendMessageTransCommand({
+    @required String message,
+    @required dynamic target, //(JMSingle | JMGroup)
+  }) async {
+      if (target is JMChatRoom) {
+        print("does not support chatroom message trans.");
+        return;
+      }
+
+      Map param = target.toJson();
+      param["message"] = message;
+      param.removeWhere((key, value) => value == null);
+
+      await _channel.invokeMethod('sendMessageTransCommand',param);
+  }
+
+  /// 设备间透传命令
+  Future<void> sendCrossDeviceTransCommand({
+    @required String message,
+    @required JMPlatformType platform,
+  }) async {
+
+    Map param = Map();
+    param["message"] = message;
+    param["type"] = getStringFromEnum(platform);
+    param.removeWhere((key, value) => value == null);
+
+    await _channel.invokeMethod('sendCrossDeviceTransCommand',param);
+  }
+
+  /*
+  * 获取 message 当前未发送已读回执的人数
+  *
+  * @param target 消息所处的会话对象，user or group
+  * @param msgId  消息本地 id，即：message.id
+  *
+  * */
+  Future<int> getMessageUnreceiptCount({
+    @required dynamic target, /// (JMSingle | JMGroup)
+    @required String msgId,
+  }) async {
+    print(flutter_log + "getMessageUnreceiptCount" + " msgid = $msgId");
+
+    if (msgId == null || msgId.length == 0 || target == null) {
+      return 0;
+    }
+
+    Map param = target.toJson();
+    param["id"] = msgId;
+
+    int count = await _channel.invokeMethod('getMessageUnreceiptCount', param..removeWhere((key,value) => value == null));
+    return count;
+  }
+
+  /*
+   * 获取 message 已读回执详情
+   *
+   * @param target    消息所处的会话对象，user or group
+   * @param msgId     消息本地 id，即：message.id
+   * @param callback  函数回调，返回已发回执和未发回执的 user 列表，如下：
+   *                      a = List<JMUserInfo>receiptList
+   *                      b = List<JMUserInfo>unreceiptList
+   *
+   */
+  void getMessageReceiptDetails({
+    @required dynamic target, /// (JMSingle | JMGroup)
+    @required String msgId,
+    @required JMCallback callback,
+  }) async {
+    print(flutter_log + "getMessageUnreceiptCount" + " msgid = $msgId");
+
+    if (msgId == null || msgId.length == 0 || target == null) {
+      callback(null,null);
+      return ;
+    }
+
+    Map param = target.toJson();
+    param["id"] = msgId;
+
+    Map resultMap = await _channel.invokeMethod('getMessageReceiptDetails', param..removeWhere((key,value) => value == null));
+    if (resultMap != null) {
+      List receiptJosnList    = resultMap["receiptList"];
+      List unreceiptJosnList  = resultMap["unreceiptList"];
+
+      List<JMUserInfo> receiptUserList    = receiptJosnList.map((json) => JMUserInfo.fromJson(json)).toList();
+      List<JMUserInfo> unreceiptUserList  = unreceiptJosnList.map((json) => JMUserInfo.fromJson(json)).toList();
+      callback(receiptUserList,unreceiptUserList);
+    }else{
+      callback(null,null);
+    }
+  }
+
+  /*
+  *  将消息设置为已读
+  *  @param target    消息所处的会话对象，user or group
+  *  @param msgId     消息本地 id，即：message.id
+  *
+  *  @return true/false 设置成功返回 true，设置失败返回 false
+  * */
+  Future<bool> setMessageHaveRead({
+    @required dynamic target, /// (JMSingle | JMGroup)
+    @required String msgId,
+  }) async {
+    print(flutter_log + "setMessageHaveRead" + " msgid = $msgId");
+
+    if (msgId == null || msgId.length == 0 || target == null) {
+      return false;
+    }
+
+    Map param = target.toJson();
+    param["id"] = msgId;
+    bool isSuccess = await _channel.invokeMethod('setMessageHaveRead', param..removeWhere((key,value) => value == null));
+
+    return isSuccess;
+  }
+
+  /*
+  * 获取消息已读状态
+  *
+  * @param target    消息所处的会话对象，user or group
+  * @param msgId     消息本地 id，即：message.id
+  *
+  * @return
+  * */
+  Future<bool> getMessageHaveReadStatus({
+    @required dynamic target, /// (JMSingle | JMGroup)
+    @required String msgId,
+  }) async {
+    print(flutter_log + "getMessageHaveReadStatus" + " msgid = $msgId");
+
+    if (msgId == null || msgId.length == 0 || target == null) {
+      return false;
+    }
+
+    Map param = target.toJson();
+    param["id"] = msgId;
+    bool isSuccess = await _channel.invokeMethod('getMessageHaveReadStatus', param..removeWhere((key,value) => value == null));
+
+    return isSuccess;
+  }
 }
 
+enum JMPlatformType {
+  android,ios,windows,web,all
+}
 enum JMConversationType {
   single, group, chatRoom
 }
@@ -1490,6 +1683,9 @@ class JMMessageSendOptions {
   /// 设置此条消息在接收方通知栏所展示通知的内容。
   String notificationText;
 
+  /// 设置这条消息的发送是否需要对方发送已读回执，false，默认值
+  bool needReadReceipt = false;
+
   Map toJson() {
     return {
         'isShowNotification': isShowNotification, 
@@ -1497,6 +1693,7 @@ class JMMessageSendOptions {
         'isCustomNotificationEnabled': isCustomNotificationEnabled,
         'notificationTitle': notificationTitle,
         'notificationText': notificationText,
+        'needReadReceipt':needReadReceipt,
       };
   }
 
@@ -1505,7 +1702,8 @@ class JMMessageSendOptions {
       isRetainOffline = json['isRetainOffline'],
       isCustomNotificationEnabled = json['isCustomNotificationEnabled'],
       notificationTitle = json['notificationTitle'],
-      notificationText = json['notificationText'];
+      notificationText = json['notificationText'],
+      needReadReceipt=json['needReadReceipt'];
 }
 
 class JMMessageOptions {
@@ -1684,12 +1882,15 @@ class JMNormalMessage {
           case JMMessageType.event:
             return JMEventMessage.fromJson(json);
             break;
+          case JMMessageType.prompt:
+            return JMPromptMessage.fromJson(json);
+            break;
         }
       }
 }
 
 enum JMMessageType {
-  text, image, voice, file, custom, location, event
+  text, image, voice, file, custom, location, event,prompt
 }
 
 class JMTextMessage extends JMNormalMessage {
@@ -1754,9 +1955,9 @@ class JMFileMessage extends JMNormalMessage {
 }
 
 class JMLocationMessage extends JMNormalMessage {
-  num longitude;  // 经度
-  num latitude;   // 纬度
-  num scale;      // 地图缩放比例
+  double longitude;  // 经度
+  double latitude;   // 纬度
+  int scale;      // 地图缩放比例
   String address; // 详细地址
 
   Map toJson() {
@@ -1791,6 +1992,21 @@ class JMCustomMessage extends JMNormalMessage {
       super.fromJson(json);
 }
 
+
+class JMPromptMessage extends JMNormalMessage {
+  String promptText;
+
+  Map toJson() {
+    var json = super.toJson();
+    json["promptText"] = promptText;
+    return json;
+  }
+
+  JMPromptMessage.fromJson(Map<dynamic, dynamic> json)
+      :promptText = json["promptText"],
+        super.fromJson(json);
+}
+
 enum JMEventType {
   group_member_added, group_member_removed, group_member_exit
 }
@@ -1813,8 +2029,14 @@ class JMEventMessage extends JMNormalMessage {
       super.fromJson(json);
 }
 
+
+
 enum JMLoginStateChangedType {
-  user_password_change, user_logout, user_deleted, user_login_status_unexpected, user_kicked
+  user_logout, // 被踢、被迫退出
+  user_deleted, // 用户被删除
+  user_password_change, // 非客户端修改密码
+  user_login_status_unexpected, // 用户登录状态异常
+  user_disabled //用户被禁用
 }
 
 enum JMContactNotifyType {
@@ -1859,18 +2081,18 @@ class JMReceiveTransCommandEvent {
   }
 
   JMReceiveTransCommandEvent.fromJson(Map<dynamic, dynamic> json)
-    : receiverType = getEnumFromString(JMTargetType.values, json['receiverType']),
-      message = json['message'],
-      sender = json['sender'] {
-        switch (receiverType) {
-          case JMTargetType.user:
-            receiver = JMUserInfo.fromJson(json['receiver']);
-            break;
-          case JMTargetType.group:
-            receiver = JMGroupInfo.fromJson(json['receiver']);
-            break;
-        }
-      }
+      :receiverType = getEnumFromString(JMTargetType.values, json['receiverType']),
+        message = json['message'],
+        sender = JMUserInfo.fromJson(json['sender']) {
+          switch (receiverType) {
+            case JMTargetType.user:
+                receiver = JMUserInfo.fromJson(json['receiver']);
+              break;
+            case JMTargetType.group:
+              receiver = JMGroupInfo.fromJson(json['receiver']);
+              break;
+    }
+  }
 }
 
 class JMReceiveApplyJoinGroupApprovalEvent {
@@ -1931,7 +2153,7 @@ class JMGroupInfo {
   int level;  // 群组等级，默认等级 4
   String owner; // 群主的 username
   String ownerAppKey; // 群主的 appKey
-  String maxMemberCount; // 最大成员数
+  int maxMemberCount; // 最大成员数
   bool isNoDisturb; // 是否免打扰
   bool isBlocked; // 是否屏蔽群消息
   JMGroupType groupType; // 群类型
@@ -2064,6 +2286,15 @@ class JMConversationInfo {
   dynamic latestMessage; // 最近的一条消息对象。如果不存在消息，则 conversation 对象中没有该属性。
   Map<dynamic, dynamic> extras;
 
+  Map toJson() {
+    return {
+      'title': title,
+      'conversationType': getStringFromEnum(conversationType),
+      'unreadCount': unreadCount,
+      'extras': extras.toString(),
+    };
+  }
+
   JMConversationInfo.fromJson(Map<dynamic, dynamic> json)
     : conversationType = getEnumFromString(JMConversationType.values, json['conversationType']),
       title = json['title'],
@@ -2159,7 +2390,7 @@ class JMConversationInfo {
   Future<JMLocationMessage> sendLocationMessage({
     @required double latitude,
     @required double longitude,
-    @required num scale,
+    @required int scale,
     String address,
     JMMessageSendOptions sendOption,
     Map<dynamic, dynamic> extras,
@@ -2190,6 +2421,7 @@ class JMConversationInfo {
     );
     return msg;
   }
+
   // getHistoryMessages
   Future<List> getHistoryMessages({
     @required int from,
